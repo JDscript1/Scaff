@@ -114,6 +114,11 @@ export class ScaffoldForgeServer {
 
       app.get("/sse", async (req, res) => {
         logger.info("Conexiune SSE nouă detectată.");
+        res.setHeader('X-Accel-Buffering', 'no');
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+
         const transport = new SSEServerTransport("/messages", res);
         const server = this.createSessionServer();
         await server.connect(transport);
@@ -132,7 +137,13 @@ export class ScaffoldForgeServer {
         const sessionId = req.query.sessionId as string;
         const session = this.sessions.get(sessionId);
         if (!session) return res.status(404).send("Session not found");
-        await session.transport.handlePostMessage(req, res);
+        
+        try {
+          await session.transport.handlePostMessage(req, res);
+        } catch (error) {
+          logger.error(`Eroare la procesarea mesajului pentru ${sessionId}:`, error);
+          res.status(500).send("Internal Error");
+        }
       });
 
       app.listen(port, "0.0.0.0", () => {
