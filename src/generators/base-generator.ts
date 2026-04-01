@@ -1,5 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { TemplateEngine } from '../core/template-engine.js';
 import { FileOperation, ProjectProfile } from '../types/index.js';
@@ -15,9 +16,11 @@ export abstract class BaseGenerator {
     
     const __filename = fileURLToPath(import.meta.url);
     const __dirname = path.dirname(__filename);
-    
-    // Directorul de templates este în build/templates (relativ la build/generators/)
-    this.templatesDir = path.resolve(__dirname, '..', 'templates');
+
+    // In build runtime, templates may still live in src/templates.
+    const builtTemplatesDir = path.resolve(__dirname, '..', 'templates');
+    const sourceTemplatesDir = path.resolve(__dirname, '..', '..', 'src', 'templates');
+    this.templatesDir = existsSync(builtTemplatesDir) ? builtTemplatesDir : sourceTemplatesDir;
   }
 
   /**

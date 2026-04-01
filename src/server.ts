@@ -6,6 +6,7 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 import { logger } from "./utils/logger.js";
 import { ToolSchemas } from "./types/schemas.js";
 import fs from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from "express";
@@ -50,7 +51,9 @@ export class ScaffoldForgeServer {
 
         if (name === "list_templates") {
           const __dirname = path.dirname(fileURLToPath(import.meta.url));
-          const templatesDir = path.resolve(__dirname, '..', 'templates');
+          const builtTemplatesDir = path.resolve(__dirname, '..', 'templates');
+          const sourceTemplatesDir = path.resolve(__dirname, '..', 'src', 'templates');
+          const templatesDir = existsSync(builtTemplatesDir) ? builtTemplatesDir : sourceTemplatesDir;
           const stacks = await fs.readdir(templatesDir);
           const result: any = {};
           for (const s of stacks) {
@@ -106,38 +109,61 @@ export class ScaffoldForgeServer {
     if (port) {
       const app = express();
       app.use(cors());
-      app.use(express.json());
+      // IMPORTANT: do not attach express.json() globally here.
+      // The MCP SSE transport expects the raw request stream on /messages.
 
       app.get("/", (req, res) => {
         res.send("ScaffoldForge Multi-Session Server Active. Connect via SSE at /sse");
       });
 
       app.get("/sse", async (req, res) => {
-        logger.info("Conexiune SSE nouă detectată.");
-        res.setHeader('X-Accel-Buffering', 'no');
-        res.setHeader('Content-Type', 'text/event-stream');
-        res.setHeader('Cache-Control', 'no-cache');
-        res.setHeader('Connection', 'keep-alive');
+        try {
+          logger.info("Conexiune SSE nouă detectată.");
+          res.setHeader('X-Accel-Buffering', 'no');
+          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Cache-Control', 'no-cache');
+          res.setHeader('Connection', 'keep-alive');
 
-        const transport = new SSEServerTransport("/messages", res);
-        const server = this.createSessionServer();
-        await server.connect(transport);
-        
-        const sessionId = transport.sessionId;
-        this.sessions.set(sessionId, { server, transport });
+          const transport = new SSEServerTransport("/messages", res);
+          const server = this.createSessionServer();
+          await server.connect(transport);
 
-        res.on('close', async () => {
-          logger.info(`Închidere sesiune: ${sessionId}`);
-          await server.close();
-          this.sessions.delete(sessionId);
-        });
+          const sessionId = transport.sessionId;
+          this.sessions.set(sessionId, { server, transport });
+
+          res.on('close', async () => {
+            logger.info(`Închidere sesiune: ${sessionId}`);
+            this.sessions.delete(sessionId);
+            try {
+              await server.close();
+            } catch (error) {
+              logger.warn(`Nu am putut închide curat sesiunea ${sessionId}:`, error);
+            }
+          });
+        } catch (error) {
+          logger.error("Eroare la inițializarea sesiunii SSE:", error);
+          if (!res.headersSent) {
+            res.status(500).send("Failed to initialize SSE session");
+          } else {
+            res.end();
+          }
+        }
       });
 
       app.post("/messages", async (req, res) => {
-        const sessionId = req.query.sessionId as string;
+        const sessionIdQuery = req.query.sessionId;
+        const sessionId = typeof sessionIdQuery === "string"
+          ? sessionIdQuery
+          : Array.isArray(sessionIdQuery) && typeof sessionIdQuery[0] === "string"
+            ? sessionIdQuery[0]
+            : undefined;
+        if (!sessionId) {
+          return res.status(400).send("Missing sessionId query param.");
+        }
+
         const session = this.sessions.get(sessionId);
-        if (!session) return res.status(404).send("Session not found");
-        
+        if (!session) return res.status(400).send("No active SSE session.");
+
         try {
           await session.transport.handlePostMessage(req, res);
         } catch (error) {

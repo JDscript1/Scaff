@@ -47,9 +47,10 @@ Adaugă un nou server MCP în setările IDE-ului tău:
 ## 🌐 Deployment (Railway / Render)
 
 Dacă dorești să rulezi serverul MCP la distanță (via SSE - Server-Sent Events):
-1. Acest server folosește momentan transportul **Stdio** (standard pentru uz local).
-2. Pentru hosting pe Railway, se recomandă folosirea unui wrapper HTTP/SSE (vezi documentația MCP SDK pentru SSE transport).
-3. Railway Start Command: `npm start`.
+1. Acest server expune endpoint-urile SSE `GET /sse` și `POST /messages?sessionId=...`.
+2. Railway Start Command: `npm start`.
+3. Rulează serviciul cu **1 singură replică** (session state-ul SSE este în memorie locală).
+4. Nu atașa parser JSON global pe ruta `/messages` (transportul MCP are nevoie de stream-ul brut).
 
 ## 🛡️ Securitate
 

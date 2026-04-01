@@ -11,11 +11,9 @@ export function safeResolve(base: string, target: string): string {
   const relative = path.relative(absoluteBase, absoluteTarget);
 
   if (relative.startsWith('..') || path.isAbsolute(relative)) {
-    if (relative !== '' && !relative.startsWith('.')) {
-        throw new Error(
-          `SECURITY ALERT: Attempted path traversal detected. Target path "${target}" is outside the permitted workspace root "${base}".`
-        );
-    }
+    throw new Error(
+      `SECURITY ALERT: Attempted path traversal detected. Target path "${target}" is outside the permitted workspace root "${base}".`
+    );
   }
 
   return absoluteTarget;
