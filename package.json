@@ -1,0 +1,28 @@
+{
+  "name": "scaffold-forge-mcp",
+  "version": "1.0.0",
+  "description": "Professional scaffolding and automation MCP server",
+  "main": "build/index.js",
+  "type": "module",
+  "bin": {
+    "scaffold-forge": "./build/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node build/index.js",
+    "dev": "tsc -w",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.1",
+    "zod": "^3.22.4",
+    "handlebars": "^4.7.8",
+    "zod-to-json-schema": "^3.22.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.1"
+  }
+}

@@ -1,0 +1,7 @@
+import { FastifyInstance } from 'fastify';
+
+export async function {{pascalCase name}}Routes(fastify: FastifyInstance) {
+  fastify.get('/', async (request, reply) => {
+    return { message: 'Module {{name}} is active' };
+  });
+}

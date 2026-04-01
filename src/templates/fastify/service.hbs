@@ -1,0 +1,11 @@
+export class {{pascalCase name}}Service {
+  constructor(private readonly repository: any) {}
+
+  async findById(id: string) {
+    return this.repository.find(id);
+  }
+
+  async create(data: any) {
+    return this.repository.save(data);
+  }
+}

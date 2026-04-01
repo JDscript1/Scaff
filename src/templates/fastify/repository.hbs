@@ -1,0 +1,10 @@
+export class {{pascalCase name}}Repository {
+  async find(id: string) {
+    // Database logic for {{name}}
+    return { id, status: 'mock' };
+  }
+
+  async save(data: any) {
+    return { ...data, id: 'new-id' };
+  }
+}
