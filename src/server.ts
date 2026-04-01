@@ -9,6 +9,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from "express";
+import cors from "cors";
 
 import { ProjectDetector } from "./core/project-detector.js";
 import { Planner } from "./core/planner.js";
@@ -40,7 +41,7 @@ export class ScaffoldForgeServer {
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
-      logger.info(`Tool apelat: ${name}`);
+      logger.info(`Executare tool: ${name}`);
 
       try {
         const schema = ToolSchemas[name];
@@ -53,13 +54,14 @@ export class ScaffoldForgeServer {
           const stacks = await fs.readdir(templatesDir);
           const result: any = {};
           for (const s of stacks) {
-            if ((validatedArgs as any).stack && s !== (validatedArgs as any).stack) continue;
             const fullStackPath = path.join(templatesDir, s);
-            const stat = await fs.stat(fullStackPath);
-            if (stat.isDirectory()) {
-              const files = await fs.readdir(fullStackPath);
-              result[s] = files.filter(f => f.endsWith('.hbs')).map(f => f.replace('.hbs', ''));
-            }
+            try {
+              const stat = await fs.stat(fullStackPath);
+              if (stat.isDirectory()) {
+                const files = await fs.readdir(fullStackPath);
+                result[s] = files.filter(f => f.endsWith('.hbs')).map(f => f.replace('.hbs', ''));
+              }
+            } catch (e) {}
           }
           return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
         }
@@ -90,7 +92,7 @@ export class ScaffoldForgeServer {
 
       } catch (error: any) {
         const errorMessage = error.errors ? `Eroare validare: ${JSON.stringify(error.errors)}` : error.message;
-        logger.error(`Eroare la procesare ${name}: ${errorMessage}`);
+        logger.error(`Eroare tool ${name}: ${errorMessage}`);
         return { content: [{ type: "text", text: errorMessage }], isError: true };
       }
     });
@@ -100,39 +102,36 @@ export class ScaffoldForgeServer {
     const port = process.env.PORT ? parseInt(process.env.PORT) : null;
 
     if (port) {
-      // --- MOD WEB (Railway) ---
       const app = express();
+      app.use(cors()); // Permitem conexiuni de la clienți MCP
       app.use(express.json());
 
-      // Ruta de root pentru Health Check (Railway are nevoie de asta pentru a evita 502)
       app.get("/", (req, res) => {
-        res.send("ScaffoldForge MCP Server is running. Use /sse to connect.");
+        res.send("ScaffoldForge MCP Server Cloud is Active. Connect via SSE at /sse");
       });
 
-      let sseTransport: SSEServerTransport | null = null;
+      let transport: SSEServerTransport | null = null;
 
       app.get("/sse", async (req, res) => {
-        logger.info("Cerere conexiune SSE primită.");
-        sseTransport = new SSEServerTransport("/messages", res);
-        await this.server.connect(sseTransport);
+        logger.info("Nouă sesiune SSE solicitată.");
+        transport = new SSEServerTransport("/messages", res);
+        await this.server.connect(transport);
       });
 
       app.post("/messages", async (req, res) => {
-        if (sseTransport) {
-          await sseTransport.handlePostMessage(req, res);
-        } else {
-          res.status(400).send("No active SSE session.");
+        if (!transport) {
+          return res.status(400).send("Nicio sesiune SSE activă.");
         }
+        await transport.handlePostMessage(req, res);
       });
 
       app.listen(port, "0.0.0.0", () => {
-        logger.info(`Server MCP Web pornit la portul ${port}. Rute: /, /sse, /messages`);
+        logger.info(`ScaffoldForge (SSE) ascultă pe portul ${port}`);
       });
     } else {
-      // --- MOD LOCAL (Stdio) ---
       const transport = new StdioServerTransport();
       await this.server.connect(transport);
-      logger.info("Server MCP Local pornit via Stdio.");
+      logger.info("ScaffoldForge (Stdio) pornit.");
     }
   }
 }
