@@ -18,20 +18,20 @@ import { FileSystemService } from "./filesystem/vfs.js";
 import { Validator } from "./core/validator.js";
 
 export class ScaffoldForgeServer {
-  private server: Server;
   private planner: Planner;
+  private sessions = new Map<string, { server: Server; transport: SSEServerTransport }>();
 
   constructor() {
-    this.server = new Server(
+    this.planner = new Planner();
+  }
+
+  private createSessionServer(): Server {
+    const server = new Server(
       { name: "scaffold-forge-mcp", version: "1.0.0" },
       { capabilities: { tools: {} } }
     );
-    this.planner = new Planner();
-    this.setupHandlers();
-  }
 
-  private setupHandlers() {
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: Object.entries(ToolSchemas).map(([name, schema]) => ({
         name,
         description: (schema as any).description || `Tool: ${name}`,
@@ -39,9 +39,9 @@ export class ScaffoldForgeServer {
       })),
     }));
 
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
-      logger.info(`Executare tool: ${name}`);
+      logger.info(`[Session] Executare tool: ${name}`);
 
       try {
         const schema = ToolSchemas[name];
@@ -92,10 +92,12 @@ export class ScaffoldForgeServer {
 
       } catch (error: any) {
         const errorMessage = error.errors ? `Eroare validare: ${JSON.stringify(error.errors)}` : error.message;
-        logger.error(`Eroare tool ${name}: ${errorMessage}`);
+        logger.error(`[Session] Eroare tool ${name}: ${errorMessage}`);
         return { content: [{ type: "text", text: errorMessage }], isError: true };
       }
     });
+
+    return server;
   }
 
   async run() {
@@ -103,35 +105,44 @@ export class ScaffoldForgeServer {
 
     if (port) {
       const app = express();
-      app.use(cors()); // Permitem conexiuni de la clienți MCP
+      app.use(cors());
       app.use(express.json());
 
       app.get("/", (req, res) => {
-        res.send("ScaffoldForge MCP Server Cloud is Active. Connect via SSE at /sse");
+        res.send("ScaffoldForge Multi-Session Server Active. Connect via SSE at /sse");
       });
 
-      let transport: SSEServerTransport | null = null;
-
       app.get("/sse", async (req, res) => {
-        logger.info("Nouă sesiune SSE solicitată.");
-        transport = new SSEServerTransport("/messages", res);
-        await this.server.connect(transport);
+        logger.info("Conexiune SSE nouă detectată.");
+        const transport = new SSEServerTransport("/messages", res);
+        const server = this.createSessionServer();
+        await server.connect(transport);
+        
+        const sessionId = transport.sessionId;
+        this.sessions.set(sessionId, { server, transport });
+
+        res.on('close', async () => {
+          logger.info(`Închidere sesiune: ${sessionId}`);
+          await server.close();
+          this.sessions.delete(sessionId);
+        });
       });
 
       app.post("/messages", async (req, res) => {
-        if (!transport) {
-          return res.status(400).send("Nicio sesiune SSE activă.");
-        }
-        await transport.handlePostMessage(req, res);
+        const sessionId = req.query.sessionId as string;
+        const session = this.sessions.get(sessionId);
+        if (!session) return res.status(404).send("Session not found");
+        await session.transport.handlePostMessage(req, res);
       });
 
       app.listen(port, "0.0.0.0", () => {
-        logger.info(`ScaffoldForge (SSE) ascultă pe portul ${port}`);
+        logger.info(`Server Cloud pornit pe portul ${port}`);
       });
     } else {
+      const server = this.createSessionServer();
       const transport = new StdioServerTransport();
-      await this.server.connect(transport);
-      logger.info("ScaffoldForge (Stdio) pornit.");
+      await server.connect(transport);
+      logger.info("ScaffoldForge (Stdio) pornit local.");
     }
   }
 }
