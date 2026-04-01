@@ -54,10 +54,11 @@ export class ScaffoldForgeServer {
           const result: any = {};
           for (const s of stacks) {
             if ((validatedArgs as any).stack && s !== (validatedArgs as any).stack) continue;
-            const stat = await fs.stat(path.join(templatesDir, s));
+            const fullStackPath = path.join(templatesDir, s);
+            const stat = await fs.stat(fullStackPath);
             if (stat.isDirectory()) {
-              const files = await fs.readdir(path.join(templatesDir, s));
-              result[s] = files.map(f => f.replace('.hbs', ''));
+              const files = await fs.readdir(fullStackPath);
+              result[s] = files.filter(f => f.endsWith('.hbs')).map(f => f.replace('.hbs', ''));
             }
           }
           return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
@@ -101,28 +102,31 @@ export class ScaffoldForgeServer {
     if (port) {
       // --- MOD WEB (Railway) ---
       const app = express();
-      
-      // Adăugăm JSON parser pentru rutele HTTP
       app.use(express.json());
+
+      // Ruta de root pentru Health Check (Railway are nevoie de asta pentru a evita 502)
+      app.get("/", (req, res) => {
+        res.send("ScaffoldForge MCP Server is running. Use /sse to connect.");
+      });
 
       let sseTransport: SSEServerTransport | null = null;
 
       app.get("/sse", async (req, res) => {
+        logger.info("Cerere conexiune SSE primită.");
         sseTransport = new SSEServerTransport("/messages", res);
         await this.server.connect(sseTransport);
-        logger.info("Client conectat via SSE la /sse");
       });
 
       app.post("/messages", async (req, res) => {
         if (sseTransport) {
           await sseTransport.handlePostMessage(req, res);
         } else {
-          res.status(400).send("Nu există nicio sesiune SSE activă.");
+          res.status(400).send("No active SSE session.");
         }
       });
 
       app.listen(port, "0.0.0.0", () => {
-        logger.info(`Server MCP Web pornit la portul ${port}. Rute: /sse, /messages`);
+        logger.info(`Server MCP Web pornit la portul ${port}. Rute: /, /sse, /messages`);
       });
     } else {
       // --- MOD LOCAL (Stdio) ---
