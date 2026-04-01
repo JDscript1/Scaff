@@ -1,5 +1,6 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { logger } from "./utils/logger.js";
@@ -7,6 +8,7 @@ import { ToolSchemas } from "./types/schemas.js";
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import express from "express";
 
 import { ProjectDetector } from "./core/project-detector.js";
 import { Planner } from "./core/planner.js";
@@ -38,21 +40,17 @@ export class ScaffoldForgeServer {
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
-      
       logger.info(`Tool apelat: ${name}`);
 
       try {
         const schema = ToolSchemas[name];
         if (!schema) throw new Error(`Tool necunoscut: ${name}`);
-
         const validatedArgs = schema.parse(args || {});
 
-        // --- DISCOVERY ---
         if (name === "list_templates") {
           const __dirname = path.dirname(fileURLToPath(import.meta.url));
           const templatesDir = path.resolve(__dirname, '..', 'templates');
           const stacks = await fs.readdir(templatesDir);
-          
           const result: any = {};
           for (const s of stacks) {
             if ((validatedArgs as any).stack && s !== (validatedArgs as any).stack) continue;
@@ -65,20 +63,14 @@ export class ScaffoldForgeServer {
           return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
         }
 
-        // --- PREVIEW ---
         if (name === "preview_generation_plan") {
           const previewArgs = validatedArgs as any;
           const targetPath = (previewArgs.payload as any).targetPath || ".";
           const profile = await ProjectDetector.detect(targetPath);
           const plan = await this.planner.createPlan(previewArgs.requestType, profile, previewArgs.payload);
-          
-          return { content: [{ type: "text", text: JSON.stringify({ 
-            message: "PREVIEW ONLY: Nicio modificare nu a fost aplicată pe disc.",
-            plan 
-          }, null, 2) }] };
+          return { content: [{ type: "text", text: JSON.stringify({ message: "PREVIEW ONLY", plan }, null, 2) }] };
         }
 
-        // --- EXECUTION ---
         const targetPath = (validatedArgs as any).targetPath || ".";
         const isDryRun = (validatedArgs as any).options?.dryRun || false;
         const vfs = new FileSystemService(isDryRun, targetPath);
@@ -93,27 +85,50 @@ export class ScaffoldForgeServer {
 
         const plan = await this.planner.createPlan(name, profile, validatedArgs);
         const result = await executor.execute(plan);
-        
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
 
       } catch (error: any) {
-        const errorMessage = error.errors 
-          ? `Eroare validare: ${JSON.stringify(error.errors)}` 
-          : error.message;
-
+        const errorMessage = error.errors ? `Eroare validare: ${JSON.stringify(error.errors)}` : error.message;
         logger.error(`Eroare la procesare ${name}: ${errorMessage}`);
-        
-        return { 
-          content: [{ type: "text", text: errorMessage }], 
-          isError: true 
-        };
+        return { content: [{ type: "text", text: errorMessage }], isError: true };
       }
     });
   }
 
   async run() {
-    const transport = new StdioServerTransport();
-    await this.server.connect(transport);
-    logger.info("ScaffoldForge MCP Server pregătit.");
+    const port = process.env.PORT ? parseInt(process.env.PORT) : null;
+
+    if (port) {
+      // --- MOD WEB (Railway) ---
+      const app = express();
+      
+      // Adăugăm JSON parser pentru rutele HTTP
+      app.use(express.json());
+
+      let sseTransport: SSEServerTransport | null = null;
+
+      app.get("/sse", async (req, res) => {
+        sseTransport = new SSEServerTransport("/messages", res);
+        await this.server.connect(sseTransport);
+        logger.info("Client conectat via SSE la /sse");
+      });
+
+      app.post("/messages", async (req, res) => {
+        if (sseTransport) {
+          await sseTransport.handlePostMessage(req, res);
+        } else {
+          res.status(400).send("Nu există nicio sesiune SSE activă.");
+        }
+      });
+
+      app.listen(port, "0.0.0.0", () => {
+        logger.info(`Server MCP Web pornit la portul ${port}. Rute: /sse, /messages`);
+      });
+    } else {
+      // --- MOD LOCAL (Stdio) ---
+      const transport = new StdioServerTransport();
+      await this.server.connect(transport);
+      logger.info("Server MCP Local pornit via Stdio.");
+    }
   }
 }
